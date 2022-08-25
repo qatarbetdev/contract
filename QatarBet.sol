@@ -578,7 +578,7 @@ contract QatarBet is ERC20Detailed, Ownable {
     IPancakeSwapRouter public router;
 
     bool public antiBotEnable = false;
-    uint256 public constant antiTime = 5 minutes;
+    uint256 public constant antiTime = 15 minutes;
     uint256 public lastAntiTime = 0;
 
     address public pair;
@@ -597,6 +597,8 @@ contract QatarBet is ERC20Detailed, Ownable {
     uint256 public _lastAddLiquidityTime;
     uint256 public _totalSupply;
     uint256 private _gonsPerFragment;
+    uint256 public _amountToAddLP;
+    uint256 public _timeToAddLP = 720 minutes;
 
     mapping(address => uint256) private _gonBalances;
     mapping(address => mapping(address => uint256)) private _allowedFragments;
@@ -620,7 +622,6 @@ contract QatarBet is ERC20Detailed, Ownable {
         _gonBalances[msg.sender] = TOTAL_GONS;
         _gonsPerFragment = TOTAL_GONS.div(_totalSupply);
 
-        _autoAddLiquidity = true;
         _isFeeExempt[ecosystemReceiver] = true;
         _isFeeExempt[msg.sender] = true;
         _isFeeExempt[address(this)] = true;
@@ -719,7 +720,7 @@ contract QatarBet is ERC20Detailed, Ownable {
 
         _gonBalances[DEAD] = _gonBalances[DEAD].add(gonAmount.mul(burnFee).div(feeDenominator));
 
-        _gonBalances[ecosystemReceiver] = _gonBalances[ecosystemReceiver].add(gonAmount.mul(liquidityFee).div(feeDenominator));
+        _amountToAddLP = _amountToAddLP + gonAmount.mul(liquidityFee).div(feeDenominator);
 
         emit Transfer(sender, address(this), feeAmount.div(_gonsPerFragment));
         return gonAmount.sub(feeAmount);
@@ -763,19 +764,17 @@ contract QatarBet is ERC20Detailed, Ownable {
     }
 
     function addLiquidity() internal swapping {
-        uint256 autoLiquidityAmount = _gonBalances[ecosystemReceiver].div(
+        uint256 autoLiquidityAmount = _amountToAddLP.div(
             _gonsPerFragment
         );
-        _gonBalances[address(this)] = _gonBalances[address(this)].add(
-            _gonBalances[ecosystemReceiver]
-        );
-        _gonBalances[ecosystemReceiver] = 0;
+        
         uint256 amountToLiquify = autoLiquidityAmount.div(2);
         uint256 amountToSwap = autoLiquidityAmount.sub(amountToLiquify);
 
         if (amountToSwap == 0) {
             return;
         }
+        
         address[] memory path = new address[](2);
         path[0] = address(this);
         path[1] = router.WETH();
@@ -802,6 +801,7 @@ contract QatarBet is ERC20Detailed, Ownable {
                 block.timestamp
             );
         }
+        _amountToAddLP = 0;
         _lastAddLiquidityTime = block.timestamp;
     }
 
@@ -845,7 +845,7 @@ contract QatarBet is ERC20Detailed, Ownable {
             _autoAddLiquidity &&
             !inSwap &&
             msg.sender != pair &&
-            block.timestamp >= (_lastAddLiquidityTime + 720 minutes);
+            block.timestamp >= (_lastAddLiquidityTime + _timeToAddLP);
     }
 
     function allowance(address owner_, address spender)
@@ -929,6 +929,7 @@ contract QatarBet is ERC20Detailed, Ownable {
 
     function setTaxFee(uint256 _ecosystemFee, uint256 _burnFee, uint256 _liquidityFee, uint256 _sellFee) external onlyOwner {
         require(_ecosystemFee.add(_burnFee).add(_liquidityFee).add(_sellFee) <= 25, "Fees must be less than 25%");
+        require(_ecosystemFee.add(_burnFee).add(_liquidityFee).add(_sellFee) > 0, "Fees must be more than 0%");
         ecosystemFee = _ecosystemFee;
         burnFee = _burnFee;
         liquidityFee = _liquidityFee;
@@ -942,10 +943,11 @@ contract QatarBet is ERC20Detailed, Ownable {
         lastAntiTime = block.timestamp;
     }
 
-    function setAutoAddLiquidity(bool _flag) external onlyOwner {
+    function setAutoAddLiquidity(bool _flag, uint256 _timeLp) external onlyOwner {
         if (_flag) {
             _autoAddLiquidity = _flag;
             _lastAddLiquidityTime = block.timestamp;
+            _timeToAddLP = _timeLp;
         } else {
             _autoAddLiquidity = _flag;
         }
